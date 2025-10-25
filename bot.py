@@ -1,4 +1,4 @@
-# bot.py - Telegram Bot для чата The Next
+# bot.py - Telegram Bot для чата The Next (только текст)
 import os
 from flask import Flask, request, jsonify
 from telegram import Bot, Update, InlineKeyboardButton, InlineKeyboardMarkup, WebAppInfo
@@ -14,13 +14,48 @@ WEBAPP_URL = os.environ.get('WEBAPP_URL', 'https://username.github.io/next-tg-ch
 app = Flask(__name__)
 bot = Bot(token=BOT_TOKEN)
 
-# Хранилище активных пользователей и сообщений (в реальном проекте использовать БД)
-active_users = {}  # {user_id: {'username': str, 'first_name': str, 'chat_id': int}}
-messages = []  # [{id, user_id, username, text, timestamp, type}]
+# Хранилище активных пользователей
+active_users = {}  # {user_id: {'nickname': str, 'chat_id': int}}
 
 @app.route('/')
 def index():
-    return 'The Next Chat Bot is running! 🚀'
+    return '''<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="UTF-8">
+    <title>The Next Chat Bot</title>
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            background: linear-gradient(135deg, #667eea 0%, #764ba2 100%);
+            color: white;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            height: 100vh;
+            margin: 0;
+        }
+        .container {
+            text-align: center;
+            padding: 40px;
+            background: rgba(255,255,255,0.1);
+            border-radius: 20px;
+            backdrop-filter: blur(10px);
+        }
+        h1 { font-size: 48px; margin-bottom: 10px; }
+        p { font-size: 18px; margin: 10px 0; }
+        .status { color: #0f0; font-weight: bold; }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🚀 The Next Chat Bot</h1>
+        <p class="status">✅ Running</p>
+        <p>👥 Active users: ''' + str(len(active_users)) + '''</p>
+        <p>💬 Text-only anonymous chat</p>
+    </div>
+</body>
+</html>'''
 
 @app.route('/webhook', methods=['POST'])
 def webhook():
@@ -28,10 +63,8 @@ def webhook():
     try:
         update = Update.de_json(request.get_json(force=True), bot)
 
-        # Обработка веб-данных от Telegram Web App
         if update.message and update.message.web_app_data:
             handle_webapp_data(update)
-        # Обработка обычных команд
         elif update.message:
             handle_message(update.message)
 
@@ -46,7 +79,6 @@ def handle_message(message):
     user_id = message.from_user.id
 
     if message.text == '/start':
-        # Приветственное сообщение с кнопкой Web App
         keyboard = InlineKeyboardMarkup([
             [InlineKeyboardButton(
                 text='🚀 Открыть чат',
@@ -56,17 +88,18 @@ def handle_message(message):
 
         welcome_text = f'''👋 Добро пожаловать в чат The Next!
 
-Нажмите кнопку ниже, чтобы открыть анонимный чат.
-Все участники могут общаться в реальном времени.
+🎯 Анонимный текстовый чат для вашей группы
 
 ✨ Возможности:
-• Текстовые сообщения
-• Голосовые сообщения
-• Изображения и видео
-• Ответы и упоминания
-• Неоновый дизайн
+• Выбор своего никнейма
+• Текстовые сообщения в реал-тайм
+• Упоминания @nickname
+• Красивый неоновый дизайн
+• Полная анонимность
 
-Присоединяйтесь к {len(active_users)} активным пользователям!'''
+👥 Сейчас онлайн: {len(active_users)} пользователей
+
+Нажмите кнопку ниже, чтобы начать общение!'''
 
         bot.send_message(
             chat_id=chat_id,
@@ -74,21 +107,18 @@ def handle_message(message):
             reply_markup=keyboard
         )
 
-        # Регистрируем пользователя
-        active_users[user_id] = {
-            'username': message.from_user.username or f'user_{user_id}',
-            'first_name': message.from_user.first_name,
-            'chat_id': chat_id
-        }
-
-        print(f'New user registered: {message.from_user.first_name} (ID: {user_id})')
+        print(f'User {user_id} started bot')
 
     elif message.text == '/stats':
-        # Статистика чата
+        nicknames = [u['nickname'] for u in active_users.values()]
         stats_text = f'''📊 Статистика чата The Next:
 
 👥 Активных пользователей: {len(active_users)}
-💬 Всего сообщений: {len(messages)}
+
+💬 Онлайн сейчас:
+{chr(10).join(['• @' + n for n in nicknames[:15]])}
+{f'...и ещё {len(nicknames)-15}' if len(nicknames) > 15 else ''}
+
 🎉 Чат работает!'''
 
         bot.send_message(chat_id=chat_id, text=stats_text)
@@ -100,59 +130,32 @@ def handle_webapp_data(update):
         chat_id = update.message.chat_id
         data = json.loads(update.message.web_app_data.data)
 
-        # Регистрируем пользователя если еще не зарегистрирован
-        if user_id not in active_users:
-            active_users[user_id] = {
-                'username': update.message.from_user.username or f'user_{user_id}',
-                'first_name': update.message.from_user.first_name,
-                'chat_id': chat_id
-            }
-
         msg_type = data.get('type')
+        nickname = data.get('nickname', f'user_{user_id}')
 
-        if msg_type == 'message':
-            # Текстовое сообщение
+        # Регистрируем/обновляем пользователя
+        active_users[user_id] = {
+            'nickname': nickname,
+            'chat_id': chat_id
+        }
+
+        if msg_type == 'join':
+            broadcast_join(nickname, user_id)
+            print(f'@{nickname} joined the chat (ID: {user_id})')
+
+        elif msg_type == 'message':
             broadcast_message(data, user_id)
-
-        elif msg_type == 'voice':
-            # Голосовое сообщение
-            broadcast_voice(data, user_id)
-
-        elif msg_type == 'image':
-            # Изображение
-            broadcast_image(data, user_id)
-
-        elif msg_type == 'video':
-            # Видео
-            broadcast_video(data, user_id)
 
     except Exception as e:
         print(f'Error handling webapp data: {e}')
 
-def broadcast_message(data, sender_id):
-    '''Отправка текстового сообщения всем активным пользователям'''
-    message = {
-        'id': len(messages) + 1,
-        'user_id': sender_id,
-        'username': active_users[sender_id]['username'],
-        'first_name': active_users[sender_id]['first_name'],
-        'text': data.get('text', ''),
-        'timestamp': datetime.now().isoformat(),
-        'type': 'text',
-        'reply_to_id': data.get('reply_to_id'),
-        'mentions': data.get('mentions', [])
-    }
+def broadcast_join(nickname, user_id):
+    '''Уведомление о входе нового пользователя'''
+    text = f"✨ @{nickname} присоединился к чату!"
 
-    messages.append(message)
-    print(f'New message from {message["first_name"]}: {message["text"]}')
-
-    # Форматируем сообщение для отправки
-    text = f"💬 {message['first_name']}: {message['text']}"
-
-    # Отправляем всем активным пользователям
     sent_count = 0
-    for user_id, user_data in active_users.items():
-        if user_id != sender_id:  # Не отправляем отправителю
+    for uid, user_data in active_users.items():
+        if uid != user_id:
             try:
                 bot.send_message(
                     chat_id=user_data['chat_id'],
@@ -160,46 +163,52 @@ def broadcast_message(data, sender_id):
                 )
                 sent_count += 1
             except Exception as e:
-                print(f'Error sending to user {user_id}: {e}')
+                print(f'Error sending join to user {uid}: {e}')
+
+    print(f'Join notification sent to {sent_count} users')
+
+def broadcast_message(data, sender_id):
+    '''Рассылка текстового сообщения ВСЕМ активным пользователям'''
+    sender_nickname = data.get('nickname', active_users.get(sender_id, {}).get('nickname', f'user_{sender_id}'))
+    message_text = data.get('text', '')
+
+    if not message_text.strip():
+        return
+
+    print(f'Broadcasting from @{sender_nickname}: {message_text[:50]}...')
+
+    # Форматируем сообщение
+    text = f"💬 @{sender_nickname}\n{message_text}"
+
+    # Рассылаем всем кроме отправителя
+    sent_count = 0
+    failed_users = []
+
+    for user_id, user_data in list(active_users.items()):
+        if user_id == sender_id:
+            continue
+
+        try:
+            bot.send_message(
+                chat_id=user_data['chat_id'],
+                text=text
+            )
+            sent_count += 1
+        except Exception as e:
+            print(f'Error sending to user {user_id}: {e}')
+            failed_users.append(user_id)
+
+    # Удаляем неактивных пользователей
+    for user_id in failed_users:
+        if user_id in active_users:
+            del active_users[user_id]
+            print(f'Removed inactive user {user_id}')
 
     print(f'Message broadcasted to {sent_count} users')
 
-def broadcast_voice(data, sender_id):
-    '''Отправка голосового сообщения'''
-    text = f"🎤 {active_users[sender_id]['first_name']} отправил(а) голосовое сообщение"
-
-    for user_id, user_data in active_users.items():
-        if user_id != sender_id:
-            try:
-                bot.send_message(chat_id=user_data['chat_id'], text=text)
-            except:
-                pass
-
-def broadcast_image(data, sender_id):
-    '''Отправка изображения'''
-    text = f"🖼 {active_users[sender_id]['first_name']} отправил(а) изображение"
-
-    for user_id, user_data in active_users.items():
-        if user_id != sender_id:
-            try:
-                bot.send_message(chat_id=user_data['chat_id'], text=text)
-            except:
-                pass
-
-def broadcast_video(data, sender_id):
-    '''Отправка видео'''
-    text = f"🎥 {active_users[sender_id]['first_name']} отправил(а) видео"
-
-    for user_id, user_data in active_users.items():
-        if user_id != sender_id:
-            try:
-                bot.send_message(chat_id=user_data['chat_id'], text=text)
-            except:
-                pass
-
 @app.route('/setwebhook', methods=['GET'])
 def set_webhook():
-    '''Настройка webhook (вызывается один раз при развертывании)'''
+    '''Настройка webhook'''
     webhook_url = request.args.get('url')
     if not webhook_url:
         return 'Error: No webhook URL provided. Use: /setwebhook?url=YOUR_RENDER_URL', 400
@@ -215,21 +224,42 @@ def set_webhook():
 
 @app.route('/webhook-info', methods=['GET'])
 def webhook_info():
-    '''Проверка текущего webhook'''
+    '''Проверка webhook'''
     try:
         info = bot.get_webhook_info()
         return jsonify({
             'url': info.url,
             'pending_update_count': info.pending_update_count,
             'last_error_date': info.last_error_date,
-            'last_error_message': info.last_error_message
+            'last_error_message': info.last_error_message,
+            'active_users': len(active_users)
+        })
+    except Exception as e:
+        return f'Error: {e}', 500
+
+@app.route('/users', methods=['GET'])
+def get_users():
+    '''Список активных пользователей'''
+    try:
+        users_list = [
+            {
+                'nickname': user_data['nickname'],
+                'user_id': user_id
+            }
+            for user_id, user_data in active_users.items()
+        ]
+        return jsonify({
+            'count': len(users_list),
+            'users': users_list
         })
     except Exception as e:
         return f'Error: {e}', 500
 
 if __name__ == '__main__':
-    # Для локальной разработки
-    print('Starting The Next Chat Bot...')
+    print('╔═══════════════════════════════════════════════╗')
+    print('║     The Next Chat Bot - Starting...          ║')
+    print('╚═══════════════════════════════════════════════╝')
     print(f'Bot Token: {BOT_TOKEN[:10]}...')
     print(f'Web App URL: {WEBAPP_URL}')
+    print('Features: Text messages only (no media/voice)')
     app.run(host='0.0.0.0', port=5000, debug=True)
